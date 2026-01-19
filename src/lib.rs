@@ -219,12 +219,7 @@ impl Obj {
                     }
 
                     // Create new object
-                    let name = terms
-                        .next()
-                        .filter(|t| util::name_is_valid(t))
-                        .ok_or_else(|| Error::ExpectedName(line_num))?
-                        .to_string();
-                    object.0 = Some(name);
+                    object.0 = terms.next().map(str::to_string);
                 },
                 _ => {},
             }
