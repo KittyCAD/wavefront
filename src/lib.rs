@@ -109,6 +109,7 @@ impl Obj {
     /// Read an OBJ from an iterator over its lines.
     pub fn from_lines<I: Iterator<Item=L>, L: AsRef<str>>(lines: I) -> Result<Self, Error> {
         let mut positions = Vec::new();
+        let mut colors = Vec::new();
         let mut uvs = Vec::new();
         let mut normals = Vec::new();
         let mut vertices = Vec::new();
@@ -132,6 +133,11 @@ impl Obj {
                         nums.next().unwrap_or(0.0),
                         nums.next().unwrap_or(0.0),
                     ]);
+                    if let Some(red) = nums.next() {
+                        let green = nums.next().unwrap_or(0.0);
+                        let blue = nums.next().unwrap_or(0.0);
+                        colors.push([red, green, blue]);
+                    }
                 },
                 Some("vt") => {
                     let mut nums = terms.map(|t| t.parse()).take_while(Result::is_ok).map(Result::unwrap);
@@ -246,9 +252,14 @@ impl Obj {
             }
         }
 
+        if colors.len() < positions.len() {
+            colors.clear();
+        }
+
         Ok(Self {
             buffers: Buffers {
                 positions,
+                colors,
                 uvs,
                 normals,
                 vertices,
@@ -340,6 +351,7 @@ impl fmt::Debug for Obj {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Obj")
             .field("positions", &self.buffers.positions.len())
+            .field("colors", &self.buffers.colors.len())
             .field("uvs", &self.buffers.uvs.len())
             .field("normals", &self.buffers.normals.len())
             .field("vertices", &self.buffers.vertices.len())
@@ -350,22 +362,28 @@ impl fmt::Debug for Obj {
 
 impl fmt::Display for Obj {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for [x, y, z] in &self.buffers.positions {
-            writeln!(f, "v {} {} {}", x, y, z)?;
+        for i in 0..self.buffers.positions.len() {
+            let [x, y, z] = self.buffers.positions[i];
+            write!(f, "v {x} {y} {z}")?;
+            if let Some([r, g, b]) = self.buffers.colors.get(i) {
+                writeln!(f, " {r} {g} {b}")?;
+            } else {
+                writeln!(f)?;
+            }
         }
         for [u, v, w] in &self.buffers.uvs {
-            writeln!(f, "vt {} {} {}", u, v, w)?;
+            writeln!(f, "vt {u} {v} {w}")?;
         }
         for [x, y, z] in &self.buffers.normals {
-            writeln!(f, "vn {} {} {}", x, y, z)?;
+            writeln!(f, "vn {x} {y} {z}")?;
         }
         for (name, groups) in self.objects.iter() {
             if name.len() > 0 {
-                writeln!(f, "o {}", name)?;
+                writeln!(f, "o {name}")?;
             }
             for (name, polys) in groups.iter() {
                 if name.len() > 0 {
-                    writeln!(f, "g {}", name)?;
+                    writeln!(f, "g {name}")?;
                 }
                 for range in polys {
                     self.buffers.lookup(*range).display(f)?;
@@ -555,6 +573,19 @@ impl<'a> Vertex<'a> {
         self.buffers.positions[self.position_index()]
     }
 
+    /// Returns the index of the vertex's color in the slice given by [`Buffers::colors`].
+    ///
+    /// Note that, unlike OBJ files themselves, this is zero-indexed.
+    pub fn color_index(&self) -> Option<Index> {
+        (self.buffers.colors.len() == self.buffers.positions.len())
+            .then(|| self.position_index())
+    }
+
+    /// Returns the vertex color, if it has one.
+    pub fn color(&self) -> Option<[f32; 3]> {
+        self.color_index().map(|i| self.buffers.colors[i])
+    }
+
     /// Returns the index of the vertex's texture coordinate, if it has one, in the slice given by [`Buffers::uvs`].
     ///
     /// Note that, unlike OBJ files themselves, this is zero-indexed.
@@ -612,6 +643,7 @@ type VertexIndices = (NonZeroUsize, Option<NonZeroUsize>, Option<NonZeroUsize>);
 #[derive(Clone, Default)]
 pub struct Buffers {
     positions: Vec<[f32; 3]>,
+    colors: Vec<[f32; 3]>,
     uvs: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     vertices: Vec<VertexIndices>,
@@ -630,6 +662,11 @@ impl Buffers {
         &self.positions
     }
 
+    /// Returns a reference to the color attributes contained within this [`Obj`].
+    pub fn colors(&self) -> &[[f32; 3]] {
+        &self.colors
+    }
+
     /// Returns a reference to the texture coordinate attributes contained within this [`Obj`].
     pub fn uvs(&self) -> &[[f32; 3]] {
         &self.uvs
@@ -641,9 +678,12 @@ impl Buffers {
     }
 
     /// Add a new position attribute to this [`Obj`], returning its index.
-    pub fn add_position(&mut self, position: [f32; 3]) -> usize {
+    pub fn add_position(&mut self, position: [f32; 3], color: Option<[f32; 3]>) -> usize {
         let idx = self.positions.len();
         self.positions.push(position);
+        if let Some(color) = color {
+            self.colors.push(color);
+        }
         idx
     }
 
